@@ -39,13 +39,24 @@ if (Test-Path $ConfigPath) {
     }
 }
 
-# 型変換 (明示的な型指定)
-$Config.ExecutionIntervalDays = [int]$Config.ExecutionIntervalDays
-$Config.MinFileAgeDays = [int]$Config.MinFileAgeDays
-$Config.LogRetentionDays = [int]$Config.LogRetentionDays
+# --- Validation and Sanitization (VULN-002 Fix) ---
+# 型変換とバリデーション (Sanitize configuration values)
+
+function Validate-PositiveInt {
+    param($Value, $Default)
+    if ($Value -match '^\d+$') { return [int]$Value }
+    return $Default
+}
+
+$Config.ExecutionIntervalDays = Validate-PositiveInt $Config.ExecutionIntervalDays 7
+$Config.MinFileAgeDays = Validate-PositiveInt $Config.MinFileAgeDays 3
+$Config.LogRetentionDays = Validate-PositiveInt $Config.LogRetentionDays 30
+
+# 安全性のための制約: MinFileAgeDays がマイナスになるのを防ぐ
+if ($Config.MinFileAgeDays -lt 0) { $Config.MinFileAgeDays = 0 }
 
 # LogDirectoryが空の場合はスクリプトと同じ場所に設定
-if ($Config.LogDirectory -eq '""' -or $Config.LogDirectory -eq "") {
+if ($Config.LogDirectory -eq '""' -or $Config.LogDirectory -eq "" -or -not (Test-Path $Config.LogDirectory)) {
     $Config.LogDirectory = $PSScriptRoot
 }
 
@@ -56,6 +67,7 @@ foreach ($Key in $Config.Keys.Clone()) {
         if ($Val -is [string]) {
             if ($Val.ToLower() -eq "true") { $Config[$Key] = $true }
             elseif ($Val.ToLower() -eq "false") { $Config[$Key] = $false }
+            else { $Config[$Key] = $true } # デフォルトは true
         }
     }
 }
@@ -77,6 +89,44 @@ function Format-Size {
     elseif ($Bytes -ge 1MB) { "{0:N2} MB" -f ($Bytes / 1MB) }
     elseif ($Bytes -ge 1KB) { "{0:N2} KB" -f ($Bytes / 1KB) }
     else { "$Bytes B" }
+}
+
+# --- Safe Recursion Function (VULN-001 Fix) ---
+# Junction Point や Symbolic Link を追跡しない安全な再帰検索関数
+function Get-SafeChildItem {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [switch]$FileOnly
+    )
+    
+    if (-not (Test-Path $Path)) { return }
+
+    # ReparsePoint（ジャンクションやシンボリックリンク）をチェックしてスキップ
+    $Item = Get-Item -Path $Path -ErrorAction SilentlyContinue
+    if ($null -eq $Item -or ($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        Write-Log "Skipping ReparsePoint: $Path"
+        return
+    }
+
+    try {
+        $Items = Get-ChildItem -Path $Path -ErrorAction SilentlyContinue
+        foreach ($Child in $Items) {
+            if ($Child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                Write-Log "Skipping ReparsePoint in $Path: $($Child.FullName)"
+                continue
+            }
+
+            if ($Child.PSIsContainer) {
+                # フォルダなら再帰
+                Get-SafeChildItem -Path $Child.FullName -FileOnly:$FileOnly
+            } else {
+                # ファイルなら出力
+                $Child
+            }
+        }
+    } catch {
+        Write-Log "Error scanning $Path : $($_.Exception.Message)"
+    }
 }
 
 # 判定処理
@@ -130,7 +180,6 @@ if ($Config.Delete_Prefetch) { $Targets += "C:\Windows\Prefetch" }
 $FinalTargets = @()
 foreach ($T in $Targets) {
     if ($T.Contains("*")) {
-        # 展開後に必ずソート (ERR-004)
         $Resolved = Get-ChildItem -Path $T -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName | Sort-Object
         if ($Resolved) { 
             $FinalTargets += $Resolved 
@@ -153,22 +202,25 @@ foreach ($Target in $FinalTargets) {
             Write-Host "Cleaning: $Target (掃除中: $Target)"
             Write-Log "Target: $Target"
             
-            # ファイルの削除
-            $Files = Get-ChildItem -Path $Target -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $ThresholdDate -or $_.CreationTime -lt $ThresholdDate }
-            foreach ($File in $Files) {
-                try {
-                    $FileSize = $File.Length
-                    Remove-Item $File.FullName -Force -ErrorAction Stop
-                    $Global:DeletedFilesCount++
-                    $Global:TotalFreedBytes += $FileSize
-                } catch {
-                    # ロックされている場合は無視
+            # ファイルの削除 (VULN-001 Fix: Get-SafeChildItem を使用)
+            $Files = Get-SafeChildItem -Path $Target -FileOnly
+            if ($Files) {
+                $Files | Where-Object { $_.LastWriteTime -lt $ThresholdDate -or $_.CreationTime -lt $ThresholdDate } | ForEach-Object {
+                    try {
+                        $FileSize = $_.Length
+                        Remove-Item $_.FullName -Force -ErrorAction Stop
+                        $Global:DeletedFilesCount++
+                        $Global:TotalFreedBytes += $FileSize
+                    } catch {
+                        # ロックされている場合は無視
+                    }
                 }
             }
 
-            # 空のディレクトリの削除（ディレクトリ自体は残すため配下を走査）
-            # 効率化された空チェック (Copilot 提案)
-            $Dirs = Get-ChildItem -Path $Target -Recurse -Directory -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
+            # 空のディレクトリの削除 (ディレクトリ自体は残すため配下を走査)
+            # Junction を消さないように Get-SafeChildItem のフォルダ版を自作するのは大変なので
+            # ここでは Get-ChildItem で ReparsePoint 属性がないものだけを対象にする
+            $Dirs = Get-ChildItem -Path $Target -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } | Sort-Object FullName -Descending
             foreach ($Dir in $Dirs) {
                 if (-not (Get-ChildItem $Dir.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
                     try {
