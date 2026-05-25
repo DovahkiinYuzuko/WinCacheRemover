@@ -1,0 +1,25 @@
+# WinCacheRemover Configuration
+# ==========================================
+
+# クリーンアップを実行する間隔（日数）
+ExecutionIntervalDays=7
+
+# ログファイルの保存先フォルダパス（空欄時はスクリプトと同一パス）
+LogDirectory=""
+
+# 削除対象とするファイルの最小経過日数（これ未満の新しいファイルは保護）
+MinFileAgeDays=3
+
+# ログファイルを保持する日数（超過したログは自動削除）
+LogRetentionDays=30
+
+# 各削除対象に対する実行フラグ（trueで削除、falseでスキップ）
+Delete_UserTemp=true
+Delete_SystemTemp=true
+Delete_WindowsUpdateCache=true
+Delete_InetCache=true
+Delete_WebCache=true
+Delete_CrashDumps=true
+Delete_UWP_LocalCache=true
+Delete_UWP_TempState=true
+Delete_Prefetch=true
