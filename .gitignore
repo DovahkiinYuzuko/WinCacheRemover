@@ -4,3 +4,5 @@
 !config.txt
 !README.md
 !LICENSE
+!.github/
+!.github/**
