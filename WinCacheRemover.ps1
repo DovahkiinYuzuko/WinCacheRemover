@@ -6,8 +6,8 @@ $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ConfigPath = Join-Path $PSScriptRoot "config.txt"
 $LastRunPath = Join-Path $PSScriptRoot "last_run.txt"
 
-# デフォルト値の設定 (全てのフラグを true で初期化)
-# Default configurations (All flags initialized to true)
+# デフォルト値の設定
+# Default configurations
 $Config = @{
     ExecutionIntervalDays     = 7
     LogDirectory              = $PSScriptRoot
@@ -15,13 +15,13 @@ $Config = @{
     LogRetentionDays          = 30
     Delete_UserTemp           = $true
     Delete_SystemTemp         = $true
-    Delete_WindowsUpdateCache = $true
+    Delete_WindowsUpdateCache = $false # Default: false (Prevent interference with active updates)
     Delete_InetCache          = $true
     Delete_WebCache           = $true
     Delete_CrashDumps         = $true
     Delete_UWP_LocalCache     = $true
     Delete_UWP_TempState      = $true
-    Delete_Prefetch           = $true
+    Delete_Prefetch           = $false # Default: false (Preserve app launch performance)
 }
 
 # config.txt の読み込み
