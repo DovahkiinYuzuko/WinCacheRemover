@@ -112,7 +112,7 @@ function Get-SafeChildItem {
         $Items = Get-ChildItem -Path $Path -ErrorAction SilentlyContinue
         foreach ($Child in $Items) {
             if ($Child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                Write-Log "Skipping ReparsePoint in $Path: $($Child.FullName)"
+                Write-Log "Skipping ReparsePoint in ${Path}: $($Child.FullName)"
                 continue
             }
 
@@ -125,7 +125,7 @@ function Get-SafeChildItem {
             }
         }
     } catch {
-        Write-Log "Error scanning $Path : $($_.Exception.Message)"
+        Write-Log "Error scanning ${Path} : $($_.Exception.Message)"
     }
 }
 
