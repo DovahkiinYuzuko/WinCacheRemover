@@ -6,12 +6,22 @@ $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ConfigPath = Join-Path $PSScriptRoot "config.txt"
 $LastRunPath = Join-Path $PSScriptRoot "last_run.txt"
 
-# デフォルト値の設定
+# デフォルト値の設定 (全てのフラグを true で初期化)
+# Default configurations (All flags initialized to true)
 $Config = @{
-    ExecutionIntervalDays = 7
-    LogDirectory          = $PSScriptRoot
-    MinFileAgeDays        = 3
-    LogRetentionDays      = 30
+    ExecutionIntervalDays     = 7
+    LogDirectory              = $PSScriptRoot
+    MinFileAgeDays            = 3
+    LogRetentionDays          = 30
+    Delete_UserTemp           = $true
+    Delete_SystemTemp         = $true
+    Delete_WindowsUpdateCache = $true
+    Delete_InetCache          = $true
+    Delete_WebCache           = $true
+    Delete_CrashDumps         = $true
+    Delete_UWP_LocalCache     = $true
+    Delete_UWP_TempState      = $true
+    Delete_Prefetch           = $true
 }
 
 # config.txt の読み込み
@@ -29,7 +39,7 @@ if (Test-Path $ConfigPath) {
     }
 }
 
-# 型変換
+# 型変換 (明示的な型指定)
 $Config.ExecutionIntervalDays = [int]$Config.ExecutionIntervalDays
 $Config.MinFileAgeDays = [int]$Config.MinFileAgeDays
 $Config.LogRetentionDays = [int]$Config.LogRetentionDays
@@ -37,6 +47,17 @@ $Config.LogRetentionDays = [int]$Config.LogRetentionDays
 # LogDirectoryが空の場合はスクリプトと同じ場所に設定
 if ($Config.LogDirectory -eq '""' -or $Config.LogDirectory -eq "") {
     $Config.LogDirectory = $PSScriptRoot
+}
+
+# Delete_ フラグを bool 型に正規化
+foreach ($Key in $Config.Keys.Clone()) {
+    if ($Key.StartsWith("Delete_")) {
+        $Val = $Config[$Key]
+        if ($Val -is [string]) {
+            if ($Val.ToLower() -eq "true") { $Config[$Key] = $true }
+            elseif ($Val.ToLower() -eq "false") { $Config[$Key] = $false }
+        }
+    }
 }
 
 # ログ設定
@@ -70,7 +91,7 @@ if (Test-Path $LastRunPath) {
 if ($LastRunDate) {
     $DaysSinceLastRun = (Get-Date) - $LastRunDate
     if ($DaysSinceLastRun.Days -lt $Config.ExecutionIntervalDays) {
-        $SkipMsg = "Skip execution. Last run was $($LastRunDate.ToString('yyyy-MM-dd')). (実行をスキップします。前回実行：$($LastRunDate.ToString('yyyy-MM-dd')))"
+        $SkipMsg = "Skip execution. Last run was $($LastRunDate.ToString('yyyy-MM-dd HH:mm:ss')). (実行をスキップします。前回実行：$($LastRunDate.ToString('yyyy-MM-dd HH:mm:ss')))"
         Write-Host $SkipMsg
         exit
     }
@@ -92,25 +113,30 @@ $UserDirs = Get-ChildItem "C:\Users" -Directory | Where-Object { $ExcludeUsers -
 
 foreach ($UserDir in $UserDirs) {
     $UserPath = $UserDir.FullName
-    if ($Config.Delete_UserTemp -eq "true") { $Targets += Join-Path $UserPath "AppData\Local\Temp" }
-    if ($Config.Delete_InetCache -eq "true") { $Targets += Join-Path $UserPath "AppData\Local\Microsoft\Windows\INetCache" }
-    if ($Config.Delete_WebCache -eq "true") { $Targets += Join-Path $UserPath "AppData\Local\Microsoft\Windows\WebCache" }
-    if ($Config.Delete_CrashDumps -eq "true") { $Targets += Join-Path $UserPath "AppData\Local\CrashDumps" }
-    if ($Config.Delete_UWP_LocalCache -eq "true") { $Targets += Join-Path $UserPath "AppData\Local\Packages\*\LocalCache" }
-    if ($Config.Delete_UWP_TempState -eq "true") { $Targets += Join-Path $UserPath "AppData\Local\Packages\*\TempState" }
+    if ($Config.Delete_UserTemp) { $Targets += Join-Path $UserPath "AppData\Local\Temp" }
+    if ($Config.Delete_InetCache) { $Targets += Join-Path $UserPath "AppData\Local\Microsoft\Windows\INetCache" }
+    if ($Config.Delete_WebCache) { $Targets += Join-Path $UserPath "AppData\Local\Microsoft\Windows\WebCache" }
+    if ($Config.Delete_CrashDumps) { $Targets += Join-Path $UserPath "AppData\Local\CrashDumps" }
+    if ($Config.Delete_UWP_LocalCache) { $Targets += Join-Path $UserPath "AppData\Local\Packages\*\LocalCache" }
+    if ($Config.Delete_UWP_TempState) { $Targets += Join-Path $UserPath "AppData\Local\Packages\*\TempState" }
 }
 
 # システムパス
-if ($Config.Delete_SystemTemp -eq "true") { $Targets += "C:\Windows\Temp" }
-if ($Config.Delete_WindowsUpdateCache -eq "true") { $Targets += "C:\Windows\SoftwareDistribution\Download" }
-if ($Config.Delete_Prefetch -eq "true") { $Targets += "C:\Windows\Prefetch" }
+if ($Config.Delete_SystemTemp) { $Targets += "C:\Windows\Temp" }
+if ($Config.Delete_WindowsUpdateCache) { $Targets += "C:\Windows\SoftwareDistribution\Download" }
+if ($Config.Delete_Prefetch) { $Targets += "C:\Windows\Prefetch" }
 
 # ワイルドカードパスの展開
 $FinalTargets = @()
 foreach ($T in $Targets) {
-    if ($T -like "*\*") {
-        $Resolved = Get-ChildItem -Path $T -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-        if ($Resolved) { $FinalTargets += $Resolved } else { $FinalTargets += $T }
+    if ($T.Contains("*")) {
+        # 展開後に必ずソート (ERR-004)
+        $Resolved = Get-ChildItem -Path $T -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName | Sort-Object
+        if ($Resolved) { 
+            $FinalTargets += $Resolved 
+        } else {
+            Write-Log "No matching directories found for wildcard path: $T"
+        }
     } else {
         $FinalTargets += $T
     }
@@ -141,9 +167,10 @@ foreach ($Target in $FinalTargets) {
             }
 
             # 空のディレクトリの削除（ディレクトリ自体は残すため配下を走査）
+            # 効率化された空チェック (Copilot 提案)
             $Dirs = Get-ChildItem -Path $Target -Recurse -Directory -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
             foreach ($Dir in $Dirs) {
-                if ((Get-ChildItem $Dir.FullName -Force | Select-Object -First 1) -eq $null) {
+                if (-not (Get-ChildItem $Dir.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
                     try {
                         Remove-Item $Dir.FullName -Force -ErrorAction Stop
                     } catch {
@@ -157,13 +184,6 @@ foreach ($Target in $FinalTargets) {
     }
 }
 
-# 完了記録
-Get-Date -Format "yyyy-MM-dd" | Out-File $LastRunPath -Encoding ascii
-$FreedSizeStr = Format-Size $Global:TotalFreedBytes
-$CompleteMsg = "Cleanup completed. Total files deleted: $Global:DeletedFilesCount, Space freed: $FreedSizeStr (クリーンアップが完了しました。削除されたファイル数: $Global:DeletedFilesCount, 解放された容量: $FreedSizeStr)"
-Write-Log $CompleteMsg
-Write-Host $CompleteMsg
-
 # ログローテーション
 $LogThreshold = (Get-Date).AddDays(-$Config.LogRetentionDays)
 $OldLogs = Get-ChildItem -Path $Config.LogDirectory -Filter "WinCacheRemover_*.log" | Where-Object { $_.LastWriteTime -lt $LogThreshold }
@@ -176,4 +196,10 @@ foreach ($OldLog in $OldLogs) {
     }
 }
 
+# 完了記録 (全ての処理が終了した後に記録 - ERR-005)
+Get-Date -Format "yyyy-MM-dd HH:mm:ss" | Out-File $LastRunPath -Encoding ascii
+$FreedSizeStr = Format-Size $Global:TotalFreedBytes
+$CompleteMsg = "Cleanup completed. Total files deleted: $Global:DeletedFilesCount, Space freed: $FreedSizeStr (クリーンアップが完了しました。削除されたファイル数: $Global:DeletedFilesCount, 解放された容量: $FreedSizeStr)"
+Write-Log $CompleteMsg
+Write-Host $CompleteMsg
 Write-Log "--- WinCacheRemover Process Ended ---"
