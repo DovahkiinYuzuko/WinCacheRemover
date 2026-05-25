@@ -1,5 +1,8 @@
 # WinCacheRemover
 
+![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=for-the-badge&logo=powershell&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)
+
 **Windows Cache & Temp File Cleaner / Windows キャッシュ・一時ファイル削除ツール**
 
 Windowsシステムおよび全ユーザーのキャッシュ・一時ファイルを安全かつ効率的に削除する、PowerShellベースのコマンドラインツールです。
