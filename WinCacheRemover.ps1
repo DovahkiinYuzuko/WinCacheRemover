@@ -48,6 +48,16 @@ function Write-Log {
     "$TimeStamp : $Message" | Out-File -FilePath $LogFile -Append -Encoding utf8
 }
 
+# Helper function to format bytes into human-readable units
+# バイト数を人間が読みやすい単位（B, KB, MB, GB）に変換するヘルパー関数
+function Format-Size {
+    param([long]$Bytes)
+    if ($Bytes -ge 1GB) { "{0:N2} GB" -f ($Bytes / 1GB) }
+    elseif ($Bytes -ge 1MB) { "{0:N2} MB" -f ($Bytes / 1MB) }
+    elseif ($Bytes -ge 1KB) { "{0:N2} KB" -f ($Bytes / 1KB) }
+    else { "$Bytes B" }
+}
+
 # 判定処理
 $LastRunDate = $null
 if (Test-Path $LastRunPath) {
@@ -109,6 +119,7 @@ foreach ($T in $Targets) {
 # 削除実行
 $ThresholdDate = (Get-Date).AddDays(-$Config.MinFileAgeDays)
 $Global:DeletedFilesCount = 0
+$Global:TotalFreedBytes = 0
 
 foreach ($Target in $FinalTargets) {
     try {
@@ -120,8 +131,10 @@ foreach ($Target in $FinalTargets) {
             $Files = Get-ChildItem -Path $Target -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $ThresholdDate -or $_.CreationTime -lt $ThresholdDate }
             foreach ($File in $Files) {
                 try {
+                    $FileSize = $File.Length
                     Remove-Item $File.FullName -Force -ErrorAction Stop
                     $Global:DeletedFilesCount++
+                    $Global:TotalFreedBytes += $FileSize
                 } catch {
                     # ロックされている場合は無視
                 }
@@ -146,7 +159,8 @@ foreach ($Target in $FinalTargets) {
 
 # 完了記録
 Get-Date -Format "yyyy-MM-dd" | Out-File $LastRunPath -Encoding ascii
-$CompleteMsg = "Cleanup completed. Total files deleted: $Global:DeletedFilesCount (クリーンアップが完了しました。削除されたファイル数: $Global:DeletedFilesCount)"
+$FreedSizeStr = Format-Size $Global:TotalFreedBytes
+$CompleteMsg = "Cleanup completed. Total files deleted: $Global:DeletedFilesCount, Space freed: $FreedSizeStr (クリーンアップが完了しました。削除されたファイル数: $Global:DeletedFilesCount, 解放された容量: $FreedSizeStr)"
 Write-Log $CompleteMsg
 Write-Host $CompleteMsg
 
