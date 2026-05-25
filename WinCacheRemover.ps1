@@ -91,7 +91,7 @@ function Format-Size {
     else { "$Bytes B" }
 }
 
-# --- Safe Recursion Function (VULN-001 Fix) ---
+# --- Safe Recursion Function (VULN-001 & ERR-001 Fix) ---
 # Junction Point や Symbolic Link を追跡しない安全な再帰検索関数
 function Get-SafeChildItem {
     param(
@@ -117,8 +117,8 @@ function Get-SafeChildItem {
             }
 
             if ($Child.PSIsContainer) {
-                # フォルダなら再帰
-                Get-SafeChildItem -Path $Child.FullName -FileOnly:$FileOnly
+                # フォルダなら再帰 (ERR-001 Fix: 明示的にパイプラインへ送る)
+                Get-SafeChildItem -Path $Child.FullName -FileOnly:$FileOnly | ForEach-Object { $_ }
             } else {
                 # ファイルなら出力
                 $Child
@@ -167,6 +167,7 @@ foreach ($UserDir in $UserDirs) {
     if ($Config.Delete_InetCache) { $Targets += Join-Path $UserPath "AppData\Local\Microsoft\Windows\INetCache" }
     if ($Config.Delete_WebCache) { $Targets += Join-Path $UserPath "AppData\Local\Microsoft\Windows\WebCache" }
     if ($Config.Delete_CrashDumps) { $Targets += Join-Path $UserPath "AppData\Local\CrashDumps" }
+    # UWPパスの改善 (Copilot 提案)
     if ($Config.Delete_UWP_LocalCache) { $Targets += Join-Path $UserPath "AppData\Local\Packages\*\LocalCache" }
     if ($Config.Delete_UWP_TempState) { $Targets += Join-Path $UserPath "AppData\Local\Packages\*\TempState" }
 }
@@ -180,7 +181,9 @@ if ($Config.Delete_Prefetch) { $Targets += "C:\Windows\Prefetch" }
 $FinalTargets = @()
 foreach ($T in $Targets) {
     if ($T.Contains("*")) {
-        $Resolved = Get-ChildItem -Path $T -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName | Sort-Object
+        # 展開後に必ずソート (ERR-004)
+        # フォルダだけでなく存在を確認 (より完全な展開)
+        $Resolved = Get-ChildItem -Path $T -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } | Select-Object -ExpandProperty FullName | Sort-Object
         if ($Resolved) { 
             $FinalTargets += $Resolved 
         } else {
@@ -202,7 +205,7 @@ foreach ($Target in $FinalTargets) {
             Write-Host "Cleaning: $Target (掃除中: $Target)"
             Write-Log "Target: $Target"
             
-            # ファイルの削除 (VULN-001 Fix: Get-SafeChildItem を使用)
+            # ファイルの削除 (VULN-001 & ERR-001 Fix)
             $Files = Get-SafeChildItem -Path $Target -FileOnly
             if ($Files) {
                 $Files | Where-Object { $_.LastWriteTime -lt $ThresholdDate -or $_.CreationTime -lt $ThresholdDate } | ForEach-Object {
@@ -217,12 +220,12 @@ foreach ($Target in $FinalTargets) {
                 }
             }
 
-            # 空のディレクトリの削除 (ディレクトリ自体は残すため配下を走査)
-            # Junction を消さないように Get-SafeChildItem のフォルダ版を自作するのは大変なので
-            # ここでは Get-ChildItem で ReparsePoint 属性がないものだけを対象にする
+            # 空のディレクトリの削除 (ERR-002 Fix: より厳密な空チェック)
             $Dirs = Get-ChildItem -Path $Target -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } | Sort-Object FullName -Descending
             foreach ($Dir in $Dirs) {
-                if (-not (Get-ChildItem $Dir.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                # 隠しファイルやリンクを含め、本当に何もないか確認 (-Force を使用し、一つでもあればスキップ)
+                $AnyChildren = Get-ChildItem -Path $Dir.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($null -eq $AnyChildren) {
                     try {
                         Remove-Item $Dir.FullName -Force -ErrorAction Stop
                     } catch {
