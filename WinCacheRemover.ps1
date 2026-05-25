@@ -1,3 +1,7 @@
+# Set Console Output Encoding to UTF-8 to prevent Mojibake
+# 日本語の文字化けを防ぐためにコンソール出力をUTF-8に設定
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ConfigPath = Join-Path $PSScriptRoot "config.txt"
 $LastRunPath = Join-Path $PSScriptRoot "last_run.txt"
@@ -56,15 +60,16 @@ if (Test-Path $LastRunPath) {
 if ($LastRunDate) {
     $DaysSinceLastRun = (Get-Date) - $LastRunDate
     if ($DaysSinceLastRun.Days -lt $Config.ExecutionIntervalDays) {
-        Write-Host "Skip execution. Last run was $($LastRunDate.ToString('yyyy-MM-dd'))."
+        $SkipMsg = "Skip execution. Last run was $($LastRunDate.ToString('yyyy-MM-dd')). (実行をスキップします。前回実行：$($LastRunDate.ToString('yyyy-MM-dd')))"
+        Write-Host $SkipMsg
         exit
     }
 }
 
 Write-Log "--- WinCacheRemover Process Started ---"
 Write-Log "Config Loaded. Interval: $($Config.ExecutionIntervalDays) days"
-Write-Host "Config Loaded. Interval: $($Config.ExecutionIntervalDays) days"
-Write-Host "Starting cleanup process..."
+Write-Host "Config Loaded. Interval: $($Config.ExecutionIntervalDays) days (設定読み込み完了。実行間隔：$($Config.ExecutionIntervalDays)日)"
+Write-Host "Starting cleanup process... (クリーンアップ処理を開始します...)"
 
 # 除外リスト
 $ExcludeUsers = @("Public", "Default", "All Users", "Default User")
@@ -108,7 +113,7 @@ $Global:DeletedFilesCount = 0
 foreach ($Target in $FinalTargets) {
     try {
         if (Test-Path $Target -ErrorAction Stop) {
-            Write-Host "Cleaning: $Target"
+            Write-Host "Cleaning: $Target (掃除中: $Target)"
             Write-Log "Target: $Target"
             
             # ファイルの削除
@@ -141,8 +146,9 @@ foreach ($Target in $FinalTargets) {
 
 # 完了記録
 Get-Date -Format "yyyy-MM-dd" | Out-File $LastRunPath -Encoding ascii
-Write-Log "Cleanup completed. Total files deleted: $Global:DeletedFilesCount"
-Write-Host "Cleanup completed. Total files deleted: $Global:DeletedFilesCount"
+$CompleteMsg = "Cleanup completed. Total files deleted: $Global:DeletedFilesCount (クリーンアップが完了しました。削除されたファイル数: $Global:DeletedFilesCount)"
+Write-Log $CompleteMsg
+Write-Host $CompleteMsg
 
 # ログローテーション
 $LogThreshold = (Get-Date).AddDays(-$Config.LogRetentionDays)
@@ -150,7 +156,7 @@ $OldLogs = Get-ChildItem -Path $Config.LogDirectory -Filter "WinCacheRemover_*.l
 foreach ($OldLog in $OldLogs) {
     try {
         Remove-Item $OldLog.FullName -Force -ErrorAction Stop
-        Write-Log "Deleted old log file: $($OldLog.Name)"
+        Write-Log "Deleted old log file: $($OldLog.Name) (古いログファイルを削除しました: $($OldLog.Name))"
     } catch {
         # 削除失敗時は無視
     }

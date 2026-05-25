@@ -2,18 +2,23 @@
 # ==========================================
 
 # クリーンアップを実行する間隔（日数）
+# Interval to run cleanup (in days)
 ExecutionIntervalDays=7
 
 # ログファイルの保存先フォルダパス（空欄時はスクリプトと同一パス）
+# Folder path to save log files (If empty, same path as the script)
 LogDirectory=""
 
 # 削除対象とするファイルの最小経過日数（これ未満の新しいファイルは保護）
+# Minimum age of files to be deleted (Newer files will be protected)
 MinFileAgeDays=3
 
 # ログファイルを保持する日数（超過したログは自動削除）
+# Number of days to keep log files (Older logs will be automatically deleted)
 LogRetentionDays=30
 
 # 各削除対象に対する実行フラグ（trueで削除、falseでスキップ）
+# Execution flags for each target (true to delete, false to skip)
 Delete_UserTemp=true
 Delete_SystemTemp=true
 Delete_WindowsUpdateCache=true
