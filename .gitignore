@@ -1,0 +1,12 @@
+*
+!.gitignore
+!*.docx
+!*.xlsx
+!*.pptx
+!*.pdf
+!*.psd
+!*.ai
+!*.png
+!*.jpg
+!*.txt
+!*.md
